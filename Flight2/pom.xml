@@ -1,0 +1,159 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.cs6240.csj</groupId>
+  <artifactId>hw4</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+    <properties>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <hadoop.version>3.3.3</hadoop.version>
+    <hbase.version>2.4.15</hbase.version>
+  </properties>
+    <dependencies>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>${hadoop.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-mapreduce-client-core</artifactId>
+      <version>${hadoop.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-mapreduce-client-shuffle</artifactId>
+      <version>${hadoop.version}</version> 
+     </dependency>
+     <dependency>
+		 <groupId>org.apache.hbase</groupId>
+		 <artifactId>hbase-common</artifactId>
+		 <version>${hbase.version}</version>
+	</dependency>
+	<dependency>
+		<groupId>org.apache.hbase</groupId>
+		<artifactId>hbase-client</artifactId>
+		<version>${hbase.version}</version>
+	</dependency>
+	<dependency>
+		<groupId>org.apache.hbase</groupId>
+		<artifactId>hbase-mapreduce</artifactId>
+		<version>${hbase.version}</version>
+	</dependency>
+     <!-- https://mvnrepository.com/artifact/com.opencsv/opencsv -->
+	<dependency>
+	    <groupId>com.opencsv</groupId>
+	    <artifactId>opencsv</artifactId>
+	    <version>5.7.1</version>
+	</dependency>
+
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.3.0</version>
+        <executions>
+          <execution>
+			<id>Secondary</id>
+			<phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>hw4.Secondary</mainClass>
+                </transformer>
+              </transformers>
+              <finalName>SECONDARY</finalName>
+            </configuration>
+          </execution>
+          
+          <execution>
+			<id>HPopulate</id>
+			<phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>hw4.HPopulate</mainClass>
+                </transformer>
+              </transformers>
+              <finalName>HPOPULATE</finalName>
+            </configuration>
+          </execution>
+          
+          <execution>
+			<id>HPopulateV1</id>
+			<phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>hw4.HPopulateV1</mainClass>
+                </transformer>
+              </transformers>
+              <finalName>HPOPULATEV1</finalName>
+            </configuration>
+          </execution>
+          
+          <execution>
+			<id>HPopulateV2</id>
+			<phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>hw4.HPopulateV2</mainClass>
+                </transformer>
+              </transformers>
+              <finalName>HPOPULATEV2</finalName>
+            </configuration>
+          </execution>
+          
+          <execution>
+			<id>HCompute</id>
+			<phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>hw4.HCompute</mainClass>
+                </transformer>
+              </transformers>
+              <finalName>HCOMPUTE</finalName>
+            </configuration>
+          </execution>
+          
+          <execution>
+			<id>HComputeV2</id>
+			<phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>hw4.HComputeV2</mainClass>
+                </transformer>
+              </transformers>
+              <finalName>HCOMPUTEV2</finalName>
+            </configuration>
+          </execution>
+          
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

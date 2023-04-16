@@ -41,6 +41,11 @@
 		<artifactId>hbase-mapreduce</artifactId>
 		<version>${hbase.version}</version>
 	</dependency>
+	<dependency>
+	    <groupId>org.apache.hbase</groupId>
+	    <artifactId>hbase-endpoint</artifactId>
+	    <version>${hbase.version}</version>
+	</dependency>
      <!-- https://mvnrepository.com/artifact/com.opencsv/opencsv -->
 	<dependency>
 	    <groupId>com.opencsv</groupId>

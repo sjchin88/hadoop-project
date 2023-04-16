@@ -1,5 +1,6 @@
 package population;
 
+import java.io.File;
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
@@ -36,24 +37,32 @@ import com.opencsv.CSVParserBuilder;
 
 import calc.Centroid;
 import calc.Coordinate;
+import program.KConfig;
 
+/**
+ * Program to populate the points from data files to HBase table
+ * @author csj
+ *
+ */
 public class PopulatePt {
-	private static final String HTABLE_NAME = "PickUpData";
-	private static final byte[] COLUMN_FAMILY = "Coordinate".getBytes();
-	private static final byte[] COLUMN_LATITUDE = "lat".getBytes(); 
-	private static final byte[] COLUMN_LONGITUDE = "long".getBytes(); 
-	private static final byte[] COLUMN_COUNT= "count".getBytes(); 
-	private static final byte[] COLUMN_NEARESTC= "nearest".getBytes(); 
+	
 	private static int BUFFER_SIZEKB = 20;
 	
+	/**
+	 * Custom mapper class, 
+	 * @author csj
+	 *
+	 */
 	public static class PopulateMapper extends Mapper<LongWritable, Text, Coordinate, IntWritable>{
 		// initialize CSVParser as comma separated values
 		private CSVParser csvParser = new CSVParserBuilder().withSeparator(',').withIgnoreQuotations(false).build();
 		private Coordinate pointKey = new Coordinate();
 		private IntWritable countValue = new IntWritable(1);
 		
+		/**
+		 * read pick-up locations from data files and emit point - count (key-value) pair to the reducer
+		 */
 		public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-			// TODO Auto-generated method stub
 			String line = value.toString();
 			String[] records = this.csvParser.parseLine(line);
 			double lat = Double.parseDouble(records[1]);
@@ -64,16 +73,20 @@ public class PopulatePt {
 		}
 	} // End of Mapper class
 	
+	/**
+	 * Custom reducer, 
+	 * @author csj
+	 *
+	 */
 	public static class PopulateReducer extends TableReducer<Coordinate, IntWritable, ImmutableBytesWritable> {
 		private Connection connection;
 		private BufferedMutator mutator;
 		
 		/**
-		 * Set up method before each Map Task
-		 * Initialize the csvParser and get the BufferedMutator connection
+		 * Set up method before each Reduce Task
+		 * Initialize the BufferedMutator connection
 		 */
-		protected void setup(Context context) throws IOException  {
-			
+		protected void setup(Context context) throws IOException  {		
 			// Instantiating the connection to HBase table via BufferedMutator
 			Configuration config = HBaseConfiguration.create();
 			BufferedMutator.ExceptionListener listener = new BufferedMutator.ExceptionListener() {
@@ -85,27 +98,28 @@ public class PopulatePt {
 				    }					
 				}
 			};
-			BufferedMutatorParams params = new BufferedMutatorParams(TableName.valueOf(HTABLE_NAME)).listener(listener);
+			BufferedMutatorParams params = new BufferedMutatorParams(TableName.valueOf(KConfig.HTABLE_NAME)).listener(listener);
 			//BufferSize in byte, default is 20
 			params.writeBufferSize( BUFFER_SIZEKB * 1024 );
 			this.connection = ConnectionFactory.createConnection(config);
-			this.mutator = this.connection.getBufferedMutator(params);	
-			
-		}
+			this.mutator = this.connection.getBufferedMutator(params);		
+		} //end of set up
 		
+		/**
+		 * sum the count for the same coordinate then write the coordinate and count information to the HBase
+		 */
 	    public void reduce(Coordinate key, Iterable<IntWritable> values,Context context) throws IOException, InterruptedException {
 	    	int sum = 0;
 		    for (IntWritable val : values) {
 		        sum += val.get();
 		    }
 		    String rowKey = key.getLatitude().toString()+ key.getLongitude().toString();
-		    System.out.println(rowKey);
 	      
 	        Put record = new Put(rowKey.toString().getBytes());
-	        record.addColumn(COLUMN_FAMILY, COLUMN_LATITUDE, Bytes.toBytes(key.getLatitude().get()));
-			record.addColumn(COLUMN_FAMILY, COLUMN_LONGITUDE, Bytes.toBytes(key.getLongitude().get()));
-			record.addColumn(COLUMN_FAMILY, COLUMN_COUNT, Bytes.toBytes(sum));
-			record.addColumn(COLUMN_FAMILY, COLUMN_NEARESTC, Bytes.toBytes(0));
+	        record.addColumn(KConfig.COLUMN_FAMILY, KConfig.COLUMN_LATITUDE, Bytes.toBytes(key.getLatitude().get()));
+			record.addColumn(KConfig.COLUMN_FAMILY, KConfig.COLUMN_LONGITUDE, Bytes.toBytes(key.getLongitude().get()));
+			record.addColumn(KConfig.COLUMN_FAMILY, KConfig.COLUMN_COUNT, Bytes.toBytes(sum));
+			record.addColumn(KConfig.COLUMN_FAMILY, KConfig.COLUMN_NEARESTC, Bytes.toBytes(0));
 			this.mutator.mutate(record);
 	    }
 	    
@@ -129,10 +143,10 @@ public class PopulatePt {
         Admin admin = connection.getAdmin();
 
         // Instantiating table descriptor class
-        TableName tName = TableName.valueOf(HTABLE_NAME);
+        TableName tName = TableName.valueOf(KConfig.HTABLE_NAME);
         TableDescriptorBuilder tdb = TableDescriptorBuilder.newBuilder(tName);
         
-        ColumnFamilyDescriptorBuilder cfd = ColumnFamilyDescriptorBuilder.newBuilder(COLUMN_FAMILY);
+        ColumnFamilyDescriptorBuilder cfd = ColumnFamilyDescriptorBuilder.newBuilder(KConfig.COLUMN_FAMILY);
         // Adding column families to table descriptor
         tdb.setColumnFamily(cfd.build());
         
@@ -144,6 +158,11 @@ public class PopulatePt {
         }
         else {
             System.out.println(" Table already exists ");
+            admin.disableTable(tName);
+            admin.deleteTable(tName);
+            TableDescriptor desc = tdb.build();
+            admin.createTable(desc);
+            System.out.println(" Table recreated ");
         }
 	} // end of createHTable() method
 	
@@ -156,18 +175,19 @@ public class PopulatePt {
 		int bufferSize;
 		try {
 			inputPath = new Path(args[0]);
-			/*
-			 * if(!"".equals(args[1])) { //Required for AWS String hbaseSite = args[1];
-			 * config.addResource(new File(hbaseSite).toURI().toURL()); }
-			 */
+			if(KConfig.IS_AWS) { 
+			//Required for AWS 
+				config.addResource(new File(KConfig.HBASE_SITE).toURI().toURL()); 
+			}
+			
 		} catch (Exception e) {
 			System.out.println("Error in parsing the program arguments");
-			System.out.println("Usage: <inputPath> <hbaseSite> <buffersize in mb (optional)>");
+			System.out.println("Usage: <inputPath> <buffersize in mb (optional)>");
 			throw e;
 		}
 		
 		try {
-			bufferSize = Integer.valueOf(args[2]);
+			bufferSize = Integer.valueOf(args[1]);
 			BUFFER_SIZEKB = bufferSize;
 		} catch (Exception e) {
 			System.out.println("Error in parsing the buffer size, default will be used");
@@ -186,12 +206,13 @@ public class PopulatePt {
 		job.setMapOutputValueClass(IntWritable.class);		
 		job.setOutputFormatClass(TableOutputFormat.class);
 		TableMapReduceUtil.initTableReducerJob(
-				HTABLE_NAME, 
+				KConfig.HTABLE_NAME, 
 				PopulateReducer.class,
 				job);
 		
-		// set number of reducer task to 0 as not required
+
 		FileInputFormat.addInputPath(job, inputPath);
-		System.exit(job.waitForCompletion(true) ? 0 : 1);
+		job.waitForCompletion(true);
+		System.out.println("Population Completed");
 	}
 }

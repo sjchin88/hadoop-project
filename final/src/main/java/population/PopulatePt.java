@@ -81,7 +81,7 @@ public class PopulatePt {
 	public static class PopulateReducer extends TableReducer<Coordinate, IntWritable, ImmutableBytesWritable> {
 		private Connection connection;
 		private BufferedMutator mutator;
-		
+		private int prefixItr = 0;
 		/**
 		 * Set up method before each Reduce Task
 		 * Initialize the BufferedMutator connection
@@ -113,7 +113,9 @@ public class PopulatePt {
 		    for (IntWritable val : values) {
 		        sum += val.get();
 		    }
-		    String rowKey = key.getLatitude().toString()+ key.getLongitude().toString();
+		    String prefix = ""+(prefixItr % 100);
+		    prefixItr++;
+		    String rowKey = prefix+key.getLatitude().toString()+ key.getLongitude().toString();
 	      
 	        Put record = new Put(rowKey.toString().getBytes());
 	        record.addColumn(KConfig.COLUMN_FAMILY, KConfig.COLUMN_LATITUDE, Bytes.toBytes(key.getLatitude().get()));
@@ -145,6 +147,14 @@ public class PopulatePt {
         // Instantiating table descriptor class
         TableName tName = TableName.valueOf(KConfig.HTABLE_NAME);
         TableDescriptorBuilder tdb = TableDescriptorBuilder.newBuilder(tName);
+        //tdb.setRegionSplitPolicyClassName("org.apache.hadoop.hbase.regionserver.ConstantSizeRegionSplitPolicy");
+        //tdb.setRegionSplitPolicyClassName("org.apache.hadoop.hbase.regionserver.KeyPrefixRegionSplitPolicy");
+       // tdb.setValue("KeyPrefixRegionSplitPolicy.prefix_length", "2");
+       // tdb.setValue("hbase.increasing.policy.initial.size", "1024");
+        //tdb.setMaxFileSize(1024);
+        //tdb.setMemStoreFlushSize(1024);
+        //tdb.setValue("hbase.table.sanity.checks", "false");
+        //
         
         ColumnFamilyDescriptorBuilder cfd = ColumnFamilyDescriptorBuilder.newBuilder(KConfig.COLUMN_FAMILY);
         // Adding column families to table descriptor

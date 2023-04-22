@@ -1,5 +1,6 @@
 package calc;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -13,11 +14,23 @@ import org.apache.commons.math3.util.Precision;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.CompareOperator;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.ConnectionFactory;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.Table;
+import org.apache.hadoop.hbase.filter.FilterList;
+import org.apache.hadoop.hbase.filter.SingleColumnValueFilter;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
 import org.apache.hadoop.hbase.mapreduce.TableMapper;
+import org.apache.hadoop.hbase.mapreduce.TableReducer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
@@ -41,6 +54,7 @@ public class KMeans {
 	public static final String SPLITTER = "\\s+";
 	public static List<Centroid> centers = new ArrayList<Centroid>();
 	
+	
 	/**
 	 * Custom mapper class
 	 * Read the centroids using the set up method
@@ -55,41 +69,18 @@ public class KMeans {
 		private CSVParser csvParser = new CSVParserBuilder().withSeparator(',').withIgnoreQuotations(false).build();
 		private Centroid centerKey = new Centroid();
 		private Coordinate pointValue = new Coordinate();
+		private int iteration = 0;
 		
 		/**
 		 * Set up method before each Map Task
-		 * Read the centroids from the local cache file
+		 * Read the centroids from the HBase
 		 */
 		protected void setup(Context context) throws IOException  {
 			Configuration conf = context.getConfiguration();
-			URI[] localCacheFiles = context.getCacheFiles();
-			readCentroids(localCacheFiles[0]);
-		}
-		
-		/**
-		 * Helper function to read the centroids from the cacheFile
-		 * @param cacheFileURI
-		 * @throws NumberFormatException
-		 * @throws IOException
-		 */
-		public static void readCentroids(URI cacheFileURI) throws NumberFormatException, IOException {
-			centers.clear();
-			BufferedReader cacheReader = new BufferedReader(new FileReader(cacheFileURI.getPath()));
-			String line;
-			try {
-				// Read the centroids from the file, split by the splitter and store it into the list
-				while((line = cacheReader.readLine()) != null) {
-					String[] tokens = line.trim().split(SPLITTER);
-					String[] temps = tokens[0].split(",");
-					int idx = Integer.parseInt(temps[0]);
-					double lat = Double.parseDouble(temps[1]);
-					double longi = Double.parseDouble(temps[2]);
-					Centroid newC = new Centroid(idx, lat, longi);
-					centers.add(newC);
-				}
-			} finally {
-				cacheReader.close();
-			}
+			Connection connection = ConnectionFactory.createConnection(conf);
+			iteration = Integer.valueOf(conf.get("iteration"));
+			centers = readCentroidsFromHBase(connection, iteration);
+			//System.out.println("Iteration:"+ iteration + " centers size:"+centers.size());
 		}
 		
 		/**
@@ -101,7 +92,7 @@ public class KMeans {
 			double longi = Bytes.toDouble(value.getValue(KConfig.COLUMN_FAMILY, KConfig.COLUMN_LONGITUDE));
 			int count = Bytes.toInt(value.getValue(KConfig.COLUMN_FAMILY, KConfig.COLUMN_COUNT));
 
-			Centroid nearest_center = centers.get(0);
+			Centroid nearest_center = new Centroid();
 			double min_distance = Double.MAX_VALUE;
 			double cur_distance = 0.0;
 			// Find the minimum center from a point
@@ -122,8 +113,21 @@ public class KMeans {
 		}
 	} // End of Mapper class
 	
-	public static class CenterReducer extends Reducer<Centroid, Coordinate, Text, Text>{
+	public static class CenterReducer extends TableReducer<Centroid, Coordinate, ImmutableBytesWritable>{
 		private Centroid center = new Centroid();
+		private String rowPrefix = ""+System.nanoTime();
+		private int iteration = 0;
+		
+		/**
+		 * Set up method before each Map Task
+		 * Read the centroids from the local cache file
+		 */
+		protected void setup(Context context) throws IOException  {
+			Configuration conf = context.getConfiguration();
+			iteration = Integer.valueOf(conf.get("iteration")) + 1;
+			System.out.println("Iteration Reducer:"+ iteration);
+		}
+		
 		
 		/**
 		 * Reduce function will calculate the new center for all points attached to the old center
@@ -147,11 +151,15 @@ public class KMeans {
 			newLat = Precision.round(newLat,4);
 			Double newLong = sumLong / count;
 			newLong = Precision.round(newLong, 4);
-			center.setIdx(key.getIdx());
-			center.setLatitude(newLat);
-			center.setLongitude(newLong);
+			//center.setIdx(key.getIdx());
 			// Emit new center and point
-			context.write(new Text(center.toString()), new Text());
+			String rowKey = rowPrefix + "-"+key.getIdx().get();
+	        Put record = new Put(rowKey.getBytes());
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_LATITUDE, Bytes.toBytes(newLat));
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_LONGITUDE, Bytes.toBytes(newLong));
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_IDX, Bytes.toBytes(key.getIdx().get()));
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION, Bytes.toBytes(iteration));
+			context.write(null, record);
 		}
 	} // End of reducer
 	
@@ -177,15 +185,21 @@ public class KMeans {
 		boolean isDone = false;
 		while(!isDone && iteration < max_limit) {
 			System.out.println("Iterations:"+iteration + " max limit:" + max_limit);
-			Configuration conf = new Configuration();
-			Job job = Job.getInstance(conf, JOB_NAME);
-			Path hdfsPath = new Path(inputFile + KConfig.CENTROID_FILE);
-			if(iteration != 0) {
-				hdfsPath = new Path(reinputFile + KConfig.RFILE_POSTFIX);
-			} 
+			// Instantiating configuration class
+			Configuration config = HBaseConfiguration.create();
+									        
+			if(KConfig.IS_AWS) {
+						//Required for AWS
+				config.addResource(new File(KConfig.HBASE_SITE).toURI().toURL());
+			}
+			HBaseAdmin.available(config);
+			Connection connection = ConnectionFactory.createConnection(config);
+			config.set("iteration", ""+iteration);
+			Job job = Job.getInstance(config, JOB_NAME);
+			
 			//upload the file to hdfs
-			job.addCacheFile(hdfsPath.toUri());
-			System.out.print("hdfs path is " + hdfsPath.toString());
+			//job.addCacheFile(hdfsPath.toUri());
+			//System.out.print("hdfs path is " + hdfsPath.toString());
 			job.setJarByClass(KMeans.class);
 			job.setMapperClass(PointMapper.class);
 			job.setReducerClass(CenterReducer.class);
@@ -193,33 +207,25 @@ public class KMeans {
 			job.setMapOutputValueClass(Coordinate.class);
 			job.setOutputKeyClass(Text.class);
 			job.setOutputValueClass(Text.class);
+			//job.setNumReduceTasks(1);
+			//FileOutputFormat.setOutputPath(job, new Path(outputFile));
 			TableMapReduceUtil.initTableMapperJob(KConfig.HTABLE_NAME, setScan(), PointMapper.class, Centroid.class, Coordinate.class, job);
-			FileOutputFormat.setOutputPath(job, new Path(outputFile));
+			TableMapReduceUtil.initTableReducerJob(KConfig.TABLE_CENTROID, CenterReducer.class, job);
 			job.waitForCompletion(true);
 			
-			// Check for variation
-			String prev = inputFile + KConfig.CENTROID_FILE;
-			if (iteration != 0) {
-				prev = reinputFile + KConfig.RFILE_POSTFIX;
-			};
 			
-			if(isConverged(outputFile, prev)) {
+			if(isConverged(connection, iteration, iteration + 1)) {
 				isDone = true;
 			}
 			
 			++iteration;
-			reinputFile = outputFile;
-			outputFile = OUT_PREFIX + System.nanoTime();
 		}
 	} // End of main method
 	
-	public static boolean isConverged(String outputFile, String prev) throws IOException {
+	public static boolean isConverged(Connection connection, int prevItr, int currItr) throws IOException {
 		boolean isConverging = true;
-		Path ofile = new Path(outputFile + KConfig.RFILE_POSTFIX);
-		List<Centroid> centers_next = readCentroidsFromFile(ofile);
-		
-		Path prevfile = new Path(prev);
-		List<Centroid> centers_prev = readCentroidsFromFile(prevfile);
+		List<Centroid> centers_next = readCentroidsFromHBase(connection, currItr);
+		List<Centroid> centers_prev = readCentroidsFromHBase(connection, prevItr);
 
 		// Sort the old centroid and new centroid and check for convergence
 		// condition
@@ -238,22 +244,24 @@ public class KMeans {
 		return isConverging;
 	}
 	
-	public static List<Centroid> readCentroidsFromFile(Path filePath) throws IOException{
-		FileSystem fs = FileSystem.get(new Configuration());
-		BufferedReader br = new BufferedReader(new InputStreamReader(
-				fs.open(filePath)));
+	public static List<Centroid> readCentroidsFromHBase(Connection connection, int iteration) throws IOException{
+		Table cTable = connection.getTable(TableName.valueOf(KConfig.TABLE_CENTROID));
 		List<Centroid> centers = new ArrayList<Centroid>();
-		String line;
-		while ((line = br.readLine()) != null) {
-			String[] tokens = line.trim().split(SPLITTER);
-			String[] temps = tokens[0].split(",");
-			int idx = Integer.parseInt(temps[0]);
-			double lat = Double.parseDouble(temps[1]);
-			double longi = Double.parseDouble(temps[2]);
-			Centroid newC = new Centroid(idx, lat, longi);
-			centers.add(newC);
+		Scan scan = setCentroidScan(iteration);
+		ResultScanner rs = cTable.getScanner(scan);
+		try {
+			for (Result r = rs.next(); r != null; r = rs.next()) {
+		    // process result...
+				int idx = Bytes.toInt(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_IDX));
+				double lat = Bytes.toDouble(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_LATITUDE));
+				double longi = Bytes.toDouble(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_LONGITUDE));
+				Centroid newC = new Centroid(idx, lat, longi);
+				centers.add(newC);
+			}
+		} finally {
+			rs.close();  // always close the ResultScanner!
 		}
-		br.close();
+		System.out.println("Iteration:"+iteration + " centers size:"+centers.size());
 		return centers;
 	}
 	
@@ -267,6 +275,32 @@ public class KMeans {
 		scan.setCacheBlocks(false);
 		//scan.setFilter(setFilter());
 		return scan;
+	}
+	
+	/**
+	 * Helper method to set the scan 
+	 * @return Scan setting
+	 */
+	public static Scan setCentroidScan(int iteration) {
+		Scan scan = new Scan();
+		scan.setCaching(500);
+		scan.setCacheBlocks(false);
+		scan.setFilter(setFilter(iteration));
+		return scan;
+	}
+	
+	/**
+	 * Helper method to set the filter list
+	 * @return the FilterList setting
+	 */
+	public static FilterList setFilter(int iteration) {
+		FilterList filterList = new FilterList(FilterList.Operator.MUST_PASS_ALL);
+		byte[] targetItr = Bytes.toBytes(iteration);
+		SingleColumnValueFilter itrFilter = new SingleColumnValueFilter(
+				KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION,
+				CompareOperator.EQUAL, targetItr );
+		filterList.addFilter(itrFilter);
+		return filterList;
 	}
 	
 }

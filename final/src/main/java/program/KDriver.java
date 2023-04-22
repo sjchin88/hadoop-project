@@ -1,6 +1,7 @@
 package program;
 
 import calc.KMeans;
+import calc.Silhouette;
 import population.CGenerator;
 import population.MinMax;
 import population.PopulatePt;
@@ -21,11 +22,15 @@ public class KDriver {
 		String intermediatePath = args[1];
 		String kvalue = args[2];
 		String itrLimit = args[3];
+		if(args[4].equals("yes")) {
+			KConfig.IS_AWS = true;
+		}
 		String minMaxDir = intermediatePath + KConfig.MINMAX_DIR;
 		String centroidsDir = intermediatePath + KConfig.CENTROID_FILE;
 		PopulatePt.main(new String[] {inputPath, "20"});
-		MinMax.main(new String[] {intermediatePath + KConfig.MINMAX_DIR});
-		CGenerator.main(new String[] {minMaxDir + KConfig.RFILE_POSTFIX, centroidsDir, kvalue});
-		KMeans.main(new String[] {intermediatePath, intermediatePath, itrLimit});
+		//MinMax.main(new String[] {intermediatePath + KConfig.MINMAX_DIR});
+		//CGenerator.main(new String[] {minMaxDir + KConfig.RFILE_POSTFIX, centroidsDir, kvalue});
+		//KMeans.main(new String[] {intermediatePath, intermediatePath, itrLimit});
+		Silhouette.main(new String[] {"5", "1"});
 	}
 }

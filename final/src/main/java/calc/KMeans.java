@@ -1,10 +1,7 @@
 package calc;
-import java.io.BufferedReader;
+
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -12,8 +9,6 @@ import java.util.List;
 
 import org.apache.commons.math3.util.Precision;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.CompareOperator;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.TableName;
@@ -34,8 +29,6 @@ import org.apache.hadoop.hbase.mapreduce.TableReducer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.Reducer;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
@@ -70,6 +63,7 @@ public class KMeans {
 		private Centroid centerKey = new Centroid();
 		private Coordinate pointValue = new Coordinate();
 		private int iteration = 0;
+		private int kValue ;
 		
 		/**
 		 * Set up method before each Map Task
@@ -79,7 +73,8 @@ public class KMeans {
 			Configuration conf = context.getConfiguration();
 			Connection connection = ConnectionFactory.createConnection(conf);
 			iteration = Integer.valueOf(conf.get("iteration"));
-			centers = readCentroidsFromHBase(connection, iteration);
+			kValue = Integer.valueOf(conf.get("kValue"));
+			centers = readCentroidsFromHBase(connection, iteration, kValue);
 			//System.out.println("Iteration:"+ iteration + " centers size:"+centers.size());
 		}
 		
@@ -116,7 +111,8 @@ public class KMeans {
 	public static class CenterReducer extends TableReducer<Centroid, Coordinate, ImmutableBytesWritable>{
 		private Centroid center = new Centroid();
 		private String rowPrefix = ""+System.nanoTime();
-		private int iteration = 0;
+		private byte[] iterationByte ;
+		private byte[] kValueByte;
 		
 		/**
 		 * Set up method before each Map Task
@@ -124,8 +120,11 @@ public class KMeans {
 		 */
 		protected void setup(Context context) throws IOException  {
 			Configuration conf = context.getConfiguration();
-			iteration = Integer.valueOf(conf.get("iteration")) + 1;
-			System.out.println("Iteration Reducer:"+ iteration);
+			int iteration = Integer.valueOf(conf.get("iteration")) + 1;
+			iterationByte = Bytes.toBytes(iteration);
+			int kValue = Integer.valueOf(conf.get("kValue"));
+			kValueByte = Bytes.toBytes(kValue);
+			
 		}
 		
 		
@@ -148,9 +147,9 @@ public class KMeans {
 			}
 			// calculate the new center
 			Double newLat = sumLat / count;
-			newLat = Precision.round(newLat,4);
+			newLat = Precision.round(newLat,3);
 			Double newLong = sumLong / count;
-			newLong = Precision.round(newLong, 4);
+			newLong = Precision.round(newLong, 3);
 			//center.setIdx(key.getIdx());
 			// Emit new center and point
 			String rowKey = rowPrefix + "-"+key.getIdx().get();
@@ -158,33 +157,31 @@ public class KMeans {
 	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_LATITUDE, Bytes.toBytes(newLat));
 	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_LONGITUDE, Bytes.toBytes(newLong));
 	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_IDX, Bytes.toBytes(key.getIdx().get()));
-	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION, Bytes.toBytes(iteration));
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION, iterationByte);
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_K, kValueByte);
 			context.write(null, record);
 		}
 	} // End of reducer
 	
 	/**
 	 * Main Driver method
-	 * @param args	args[0] = path of the input file for centroids, args[1] = intermediate folder for output files
-	 * @throws IllegalArgumentException
-	 * @throws IOException
-	 * @throws ClassNotFoundException
-	 * @throws InterruptedException
+	 * @param args	
+	 * args[0] = max limit for the iteration
+	 * args[1] = currentK
+	 * args[2] = target mapper job numbers
+	 * @throws Throwable 
 	 */
-	public static void main(String[] args) throws IllegalArgumentException, IOException, ClassNotFoundException, InterruptedException {
-		IN_PREFIX = args[0];
-		OUT_PREFIX = args[1];
-		int max_limit = Integer.parseInt(args[2]);
-		
-		String inputFile = IN_PREFIX;
-		String outputFile = OUT_PREFIX + System.nanoTime();
-		String reinputFile = outputFile;
+	public static void main(String[] args) throws Throwable {
+		int max_limit = Integer.parseInt(args[0]);
+		int currentK = Integer.parseInt(args[1]);
+		int jobNums = Integer.valueOf(args[2]);
+
 		
 		// Reiterate until convergence or max_limit reach
 		int iteration = 0;
 		boolean isDone = false;
 		while(!isDone && iteration < max_limit) {
-			System.out.println("Iterations:"+iteration + " max limit:" + max_limit);
+			System.out.println("Iterations:"+iteration + " max limit:" + max_limit + " k:" + currentK);
 			// Instantiating configuration class
 			Configuration config = HBaseConfiguration.create();
 									        
@@ -195,11 +192,9 @@ public class KMeans {
 			HBaseAdmin.available(config);
 			Connection connection = ConnectionFactory.createConnection(config);
 			config.set("iteration", ""+iteration);
+			config.set("kValue", ""+currentK);
 			Job job = Job.getInstance(config, JOB_NAME);
 			
-			//upload the file to hdfs
-			//job.addCacheFile(hdfsPath.toUri());
-			//System.out.print("hdfs path is " + hdfsPath.toString());
 			job.setJarByClass(KMeans.class);
 			job.setMapperClass(PointMapper.class);
 			job.setReducerClass(CenterReducer.class);
@@ -207,25 +202,54 @@ public class KMeans {
 			job.setMapOutputValueClass(Coordinate.class);
 			job.setOutputKeyClass(Text.class);
 			job.setOutputValueClass(Text.class);
-			//job.setNumReduceTasks(1);
-			//FileOutputFormat.setOutputPath(job, new Path(outputFile));
-			TableMapReduceUtil.initTableMapperJob(KConfig.HTABLE_NAME, setScan(), PointMapper.class, Centroid.class, Coordinate.class, job);
+
+			TableMapReduceUtil.initTableMapperJob(setScan(jobNums), PointMapper.class, Centroid.class, Coordinate.class, job);
 			TableMapReduceUtil.initTableReducerJob(KConfig.TABLE_CENTROID, CenterReducer.class, job);
 			job.waitForCompletion(true);
 			
-			
-			if(isConverged(connection, iteration, iteration + 1)) {
+			if(isConverged(connection, iteration, iteration + 1, currentK)) {
 				isDone = true;
 			}
 			
 			++iteration;
-		}
+		} // End of while loop
+		//Call the method to calculate silhouette scores
+		Silhouette.main(new String[] {args[1], ""+iteration, args[2]});
+		
 	} // End of main method
 	
-	public static boolean isConverged(Connection connection, int prevItr, int currItr) throws IOException {
+	/**
+	 * Helper method to set the scan for points
+	 * @return Scan setting
+	 */
+	public static List<Scan> setScan(int jobNums) {
+		List<Scan> scans = new ArrayList<Scan>();
+		for(int i = 0; i < jobNums; i++) {
+			Scan scan = new Scan();
+			scan.setCaching(500);
+			scan.setCacheBlocks(false);
+			scan.setAttribute(Scan.SCAN_ATTRIBUTES_TABLE_NAME, Bytes.toBytes(KConfig.TABLE_PT));
+			int prefix = i + 10;
+			scan.setRowPrefixFilter(Bytes.toBytes(""+prefix));
+			scans.add(scan);
+		}
+		
+		return scans;
+	}
+	
+	/**
+	 * Check if the centroids are converging
+	 * @param connection HBase connection
+	 * @param prevItr prev iteration value
+	 * @param currItr curr iteration value
+	 * @param k k value
+	 * @return boolean indicate is converging
+	 * @throws IOException
+	 */
+	public static boolean isConverged(Connection connection, int prevItr, int currItr, int k) throws IOException {
 		boolean isConverging = true;
-		List<Centroid> centers_next = readCentroidsFromHBase(connection, currItr);
-		List<Centroid> centers_prev = readCentroidsFromHBase(connection, prevItr);
+		List<Centroid> centers_next = readCentroidsFromHBase(connection, currItr, k);
+		List<Centroid> centers_prev = readCentroidsFromHBase(connection, prevItr, k);
 
 		// Sort the old centroid and new centroid and check for convergence
 		// condition
@@ -235,8 +259,8 @@ public class KMeans {
 		Iterator<Centroid> it = centers_prev.iterator();
 		for (Centroid d : centers_next) {
 			Centroid temp = it.next();
-			if (Math.abs(temp.getLatitude().get() - d.getLatitude().get()) > 0.0001 || 
-					Math.abs(temp.getLongitude().get() - d.getLongitude().get()) > 0.0001) {
+			if (Math.abs(temp.getLatitude().get() - d.getLatitude().get()) > 0.001 || 
+					Math.abs(temp.getLongitude().get() - d.getLongitude().get()) > 0.001) {
 				isConverging = false;
 				break;
 			}
@@ -244,10 +268,18 @@ public class KMeans {
 		return isConverging;
 	}
 	
-	public static List<Centroid> readCentroidsFromHBase(Connection connection, int iteration) throws IOException{
+	/**
+	 * Helper method to read the centroids from hbase
+	 * @param connection HBase connection
+	 * @param iteration target iteration
+	 * @param k			target k value
+	 * @return
+	 * @throws IOException
+	 */
+	public static List<Centroid> readCentroidsFromHBase(Connection connection, int iteration, int k) throws IOException{
 		Table cTable = connection.getTable(TableName.valueOf(KConfig.TABLE_CENTROID));
 		List<Centroid> centers = new ArrayList<Centroid>();
-		Scan scan = setCentroidScan(iteration);
+		Scan scan = setCentroidScan(iteration, k);
 		ResultScanner rs = cTable.getScanner(scan);
 		try {
 			for (Result r = rs.next(); r != null; r = rs.next()) {
@@ -266,40 +298,37 @@ public class KMeans {
 	}
 	
 	/**
-	 * Helper method to set the scan 
+	 * Helper method to set the scan for centroid
+	 * @param iteration target iteration
+	 * @param k			target k value
 	 * @return Scan setting
 	 */
-	public static Scan setScan() {
+	public static Scan setCentroidScan(int iteration, int k) {
 		Scan scan = new Scan();
 		scan.setCaching(500);
 		scan.setCacheBlocks(false);
-		//scan.setFilter(setFilter());
-		return scan;
-	}
-	
-	/**
-	 * Helper method to set the scan 
-	 * @return Scan setting
-	 */
-	public static Scan setCentroidScan(int iteration) {
-		Scan scan = new Scan();
-		scan.setCaching(500);
-		scan.setCacheBlocks(false);
-		scan.setFilter(setFilter(iteration));
+		scan.setFilter(setFilter(iteration, k));
 		return scan;
 	}
 	
 	/**
 	 * Helper method to set the filter list
+	 * @param iteration target iteration
+	 * @param k			target k value
 	 * @return the FilterList setting
 	 */
-	public static FilterList setFilter(int iteration) {
+	public static FilterList setFilter(int iteration, int k) {
 		FilterList filterList = new FilterList(FilterList.Operator.MUST_PASS_ALL);
 		byte[] targetItr = Bytes.toBytes(iteration);
 		SingleColumnValueFilter itrFilter = new SingleColumnValueFilter(
 				KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION,
 				CompareOperator.EQUAL, targetItr );
 		filterList.addFilter(itrFilter);
+		byte[] targetK = Bytes.toBytes(k);
+		SingleColumnValueFilter kFilter = new SingleColumnValueFilter(
+				KConfig.CF_CENTROID, KConfig.COLUMN_K,
+				CompareOperator.EQUAL, targetK );
+		filterList.addFilter(kFilter);
 		return filterList;
 	}
 	

@@ -61,7 +61,7 @@ public class KDriver {
 			CGenerator.main(new String[] {""+k});
 			KMeans.main(new String[] {itrLimit, ""+k, jobNums});
 		}
-		Summarizer.main(new String[] {outPath + "summary.txt", outPath + "ksummary.txt"});
+		Summarizer.main(new String[] {outPath});
 	}
 	
 	/**

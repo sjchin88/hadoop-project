@@ -4,8 +4,13 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.net.URI;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.TableName;
@@ -39,8 +44,8 @@ public class Summarizer {
 	 * @throws IOException
 	 */
 	public static void main(String[] args) throws MasterNotRunningException, ZooKeeperConnectionException, IOException {
-		String fileName = args[0];
-		String kFName = args[1];
+		String outputDir = args[0];
+		//String kFName = args[1];
 		// Instantiating configuration class
 		Configuration config = HBaseConfiguration.create();
 								        
@@ -49,17 +54,22 @@ public class Summarizer {
 			config.addResource(new File(KConfig.HBASE_SITE).toURI().toURL());
 		}
 		HBaseAdmin.available(config);
-		Connection connection = ConnectionFactory.createConnection(config);
+		
 		//Loop through all k value silscore calculation to get the max SilHouette Score
-		readK(connection, kFName);
+		readK(config, outputDir);
 		
 		//Output the SilHouette Score, KValue, and associated Centroids to the file 
-		printK(connection, fileName);
+		printK(config, outputDir);
 	}
 	
-	public static void readK(Connection connection, String fileName) throws IOException {
+	public static void readK(Configuration config, String outputDir) throws IOException {
+		Connection connection = ConnectionFactory.createConnection(config);
 		Table sTable = connection.getTable(TableName.valueOf(KConfig.TABLE_SILSCORE));
-		BufferedWriter bwriter = new BufferedWriter(new FileWriter(fileName));
+		FileSystem fileSystem = FileSystem.get(URI.create(outputDir),config);
+		System.out.println(fileSystem.getUri());
+		FSDataOutputStream fsDataOutputStream = fileSystem.create(new Path(outputDir+"//KResults.txt"));      
+		PrintWriter writer  = new PrintWriter(fsDataOutputStream);
+		//BufferedWriter bwriter = new BufferedWriter(fsDataOutputStream);
 		Scan scan = new Scan();
 		ResultScanner rs = sTable.getScanner(scan);
 		try {
@@ -73,20 +83,24 @@ public class Summarizer {
 					kMaxSil = k;
 					itrMaxSil = itr;
 				}
-				bwriter.write("SilScore:" + silscore + " at Kvalue:" + k + " at iteration:"+itr);
+				writer.println("SilScore:" + silscore + " at Kvalue:" + k + " at iteration:"+itr);
 			}
 		} finally {
 			rs.close();  // always close the ResultScanner!
-			bwriter.close();
+			writer.close();
 		}
 	}
 	
-	public static void printK(Connection connection, String fileName) throws IOException {
-		BufferedWriter bwriter = new BufferedWriter(new FileWriter(fileName));
-		bwriter.write("Max SilScore:" + maxSil + " at kValue:" + kMaxSil + " at iteration:" + itrMaxSil);
-		bwriter.newLine();
-		bwriter.write("Corresponding centroids");
-		bwriter.newLine();
+	public static void printK(Configuration config, String outputDir) throws IOException {
+		Connection connection = ConnectionFactory.createConnection(config);
+		FileSystem fileSystem = FileSystem.get(URI.create(outputDir),config);
+		System.out.println(fileSystem.getUri());
+		FSDataOutputStream fsDataOutputStream = fileSystem.create(new Path(outputDir+"//Summary.txt"));      
+		PrintWriter bwriter  = new PrintWriter(fsDataOutputStream);
+		bwriter.println("Max SilScore:" + maxSil + " at kValue:" + kMaxSil + " at iteration:" + itrMaxSil);
+		//bwriter.newLine();
+		bwriter.println("Corresponding centroids");
+		//bwriter.newLine();
 		Table cTable = connection.getTable(TableName.valueOf(KConfig.TABLE_CENTROID));
 		
 		Scan scan = KMeans.setCentroidScan(itrMaxSil, kMaxSil);
@@ -97,8 +111,8 @@ public class Summarizer {
 				int idx = Bytes.toInt(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_IDX));
 				double lat = Bytes.toDouble(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_LATITUDE));
 				double longi = Bytes.toDouble(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_LONGITUDE));
-				bwriter.write(idx+". Lat:"+lat + " Longitude:"+longi);
-				bwriter.newLine();
+				bwriter.println(idx+". Lat:"+lat + " Longitude:"+longi);
+				//bwriter.newLine();
 			}
 		} finally {
 			rs.close();  // always close the ResultScanner!

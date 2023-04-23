@@ -25,7 +25,6 @@ import org.apache.hadoop.hbase.mapreduce.TableReducer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 
@@ -43,7 +42,7 @@ public class MinMax {
 	 * Custom mapper, 
 	 * the map task read data from HBase table and update the min max of Latitude and Longitude
 	 * the cleanup method emit the min and max of latitude and longitude to the reducer
-	 * @author vcsj
+	 * @author csj
 	 *
 	 */
 	public static class MinMaxMapper extends TableMapper<Text, MinMaxTuple>{
@@ -78,7 +77,7 @@ public class MinMax {
 	
 	/**
 	 * Custom reducer
-	 * @author vboxuser
+	 * @author csj
 	 *
 	 */
 	public static class MinMaxReducer extends TableReducer<Text, MinMaxTuple, ImmutableBytesWritable>{
@@ -162,7 +161,6 @@ public class MinMax {
 		createHTable(connection);
 		
 		Job job = Job.getInstance(config, JOB_NAME);
-		String outputFile = args[0];
 		job.setJarByClass(MinMax.class);
 		job.setMapperClass(MinMaxMapper.class);
 		job.setReducerClass(MinMaxReducer.class);
@@ -171,9 +169,8 @@ public class MinMax {
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(Text.class);
 		job.setNumReduceTasks(1);
-		TableMapReduceUtil.initTableMapperJob(KConfig.HTABLE_NAME, setScan(), MinMaxMapper.class, Text.class, MinMaxTuple.class, job);
+		TableMapReduceUtil.initTableMapperJob(KConfig.TABLE_PT, setScan(), MinMaxMapper.class, Text.class, MinMaxTuple.class, job);
 		TableMapReduceUtil.initTableReducerJob(KConfig.TABLE_MINMAX, MinMaxReducer.class, job);
-		FileOutputFormat.setOutputPath(job, new Path(outputFile));
 		job.waitForCompletion(true);
 		System.out.println("Min Max extracted");
 	}
@@ -186,7 +183,6 @@ public class MinMax {
 		Scan scan = new Scan();
 		scan.setCaching(500);
 		scan.setCacheBlocks(false);
-		//scan.addColumn(COLUMN_FAMILY,COLUMN_LATITUDE);
 		return scan;
 	}
 	

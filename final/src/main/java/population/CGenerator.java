@@ -1,10 +1,6 @@
 package population;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.util.Random;
 
@@ -18,7 +14,6 @@ import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
@@ -27,11 +22,14 @@ import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.io.Text;
 
-import calc.Centroid;
 import program.KConfig;
 
+/**
+ * Program to generate centroid for given kvalue
+ * @author csj
+ *
+ */
 public class CGenerator {
 	private static int KVALUE = 5;
 	private static double minLatitude;
@@ -63,11 +61,11 @@ public class CGenerator {
         }
         else {
             System.out.println(" Table already exists ");
-            admin.disableTable(tName);
-            admin.deleteTable(tName);
-            TableDescriptor desc = tdb.build();
-            admin.createTable(desc);
-            System.out.println(" Table recreated ");
+			/*
+			 * admin.disableTable(tName); admin.deleteTable(tName); TableDescriptor desc =
+			 * tdb.build(); admin.createTable(desc);
+			 * System.out.println(" Table recreated ");
+			 */
         }
 	} // end of createHTable() method
 	
@@ -101,7 +99,7 @@ public class CGenerator {
 		Random random = new Random();
 		Table cTable = connection.getTable(TableName.valueOf(KConfig.TABLE_CENTROID));
 		for(int i = 0; i < KVALUE; i++) {
-			String rowKey = "Initial"+i;
+			String rowKey = "Initial-"+KVALUE+"-"+i;
 			double lat = random.nextDouble() * (maxLatitude - minLatitude) + minLatitude;
 			double longi = random.nextDouble() * (maxLongitude - minLongitude) + minLongitude;
 			Put record = new Put(rowKey.getBytes());
@@ -109,6 +107,7 @@ public class CGenerator {
 	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_LONGITUDE, Bytes.toBytes(longi));
 	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_IDX, Bytes.toBytes(i));
 	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION, Bytes.toBytes(0));
+	        record.addColumn(KConfig.CF_CENTROID, KConfig.COLUMN_K, Bytes.toBytes(KVALUE));
 			//System.out.println(center.toString());
 			cTable.put(record);
 			//context.write(new Text(center.toString()), null);
@@ -117,9 +116,7 @@ public class CGenerator {
 	}
 	
 	public static void main(String[] args) throws MasterNotRunningException, ZooKeeperConnectionException, IOException, NumberFormatException, InterruptedException {
-		String inputDir = args[0];
-		String outputDir = args[1];
-		KVALUE = Integer.parseInt(args[2]);
+		KVALUE = Integer.parseInt(args[0]);
 		// Instantiating configuration class
 		Configuration config = HBaseConfiguration.create();
 								        

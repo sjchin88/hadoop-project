@@ -5,9 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.commons.math3.util.Precision;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.CompareOperator;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.TableName;
@@ -32,40 +30,34 @@ import org.apache.hadoop.hbase.mapreduce.TableReducer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.io.Text;
+
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.Reducer.Context;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
-import com.opencsv.CSVParser;
-import com.opencsv.CSVParserBuilder;
-
-import population.MinMax;
-import population.MinMaxTuple;
-import population.MinMax.MinMaxMapper;
-import population.MinMax.MinMaxReducer;
 import program.KConfig;
 
+/**
+ * Program to calculate the silhouette score
+ * @author csj
+ *
+ */
 public class Silhouette {
 	public static final String JOB_NAME = "Silhouette calc";
-	public static final String SPLITTER = "\\s+";
 	public static List<Centroid> centers = new ArrayList<Centroid>();
 	
 	/**
 	 * Custom mapper class
 	 * Read the centroids using the set up method
 	 * Read the pick-up coordinate using the mapper
-	 * find the silhouette score of the coordinate and emit
+	 * Calculate the silhouette score of the coordinate and emit
 	 * to the reducer
 	 * @author csj
 	 *
 	 */
 	public static class SilMapper extends TableMapper<DoubleWritable, IntWritable>{
-		//private Centroid centerKey = new Centroid();
-		//private Coordinate pointKey = new Coordinate();
 		private double sumKey = 0.0;
 		private int countValue = 0;
 		private int iteration = 0;
+		private int kValue;
 		
 		/**
 		 * Set up method before each Map Task
@@ -75,20 +67,19 @@ public class Silhouette {
 			Configuration conf = context.getConfiguration();
 			Connection connection = ConnectionFactory.createConnection(conf);
 			iteration = Integer.valueOf(conf.get("iteration"));
-			centers = readCentroidsFromHBase(connection, iteration);
+			kValue = Integer.valueOf(conf.get("kValue"));
+			centers = KMeans.readCentroidsFromHBase(connection, iteration, kValue);
 			//System.out.println("Iteration:"+ iteration + " centers size:"+centers.size());
 		}
 		
 		/**
-		 * 
+		 * Calculate the silScore for each coordinate points
 		 */
 		public void map(ImmutableBytesWritable row, Result value, Context context) throws IOException, InterruptedException {
-			// TODO Auto-generated method stub
 			double lat = Bytes.toDouble(value.getValue(KConfig.COLUMN_FAMILY, KConfig.COLUMN_LATITUDE));
 			double longi = Bytes.toDouble(value.getValue(KConfig.COLUMN_FAMILY, KConfig.COLUMN_LONGITUDE));
 			int count = Bytes.toInt(value.getValue(KConfig.COLUMN_FAMILY, KConfig.COLUMN_COUNT));
 
-			Centroid nearest_center = new Centroid();
 			double min_distance = Double.MAX_VALUE;
 			double second_distance = Double.MAX_VALUE;
 			double cur_distance = 0.0;
@@ -96,7 +87,6 @@ public class Silhouette {
 			for (Centroid c: centers) {
 				cur_distance = Math.pow(lat - c.getLatitude().get(), 2.0) + Math.pow(longi - c.getLongitude().get(), 2.0);
 				if(cur_distance < min_distance) {
-					nearest_center = c;
 					second_distance = min_distance;
 					min_distance = cur_distance;
 				} else if (cur_distance < second_distance) {
@@ -106,7 +96,7 @@ public class Silhouette {
 			
 			double silScore = (second_distance - min_distance) / second_distance;
 			//Emit the point and silhouette score
-			sumKey += silScore;
+			sumKey += silScore * count;
 			countValue += count;
 		}
 		
@@ -119,19 +109,23 @@ public class Silhouette {
 		
 	} // End of Mapper class
 	
+	/**
+	 * Reducer class, compute silscore for all points 
+	 * @author csj
+	 *
+	 */
 	public static class SilReducer extends TableReducer<DoubleWritable, IntWritable, ImmutableBytesWritable>{
-		//private Centroid center = new Centroid();
-		//private String rowPrefix = ""+System.currentTimeMillis();
 		private int kValue = 0;
+		private int iteration = 0;
 		private double sumAllSil = 0.0;
 		private int countAll = 0;
 		
 		/**
-		 * Set up method before each Map Task
-		 * Read the centroids from the local cache file
+		 * Set up method before each Reducer Task
 		 */
 		protected void setup(Context context) throws IOException  {
 			Configuration conf = context.getConfiguration();
+			iteration = Integer.valueOf(conf.get("iteration"));
 			kValue = Integer.valueOf(conf.get("kValue"));
 		}
 		
@@ -159,60 +153,64 @@ public class Silhouette {
 	        Put record = new Put(rowKey.getBytes());
 	        record.addColumn(KConfig.CF_SILSCORE, KConfig.COLUMN_SILSCORE, Bytes.toBytes(avgSil));
 	        record.addColumn(KConfig.CF_SILSCORE, KConfig.COLUMN_K, Bytes.toBytes(kValue));
+	        record.addColumn(KConfig.CF_SILSCORE, KConfig.COLUMN_ITERATION, Bytes.toBytes(iteration));
 			context.write(null, record);
-			//context.write(new DoubleWritable(sumKey), new IntWritable(countValue));
 	    }
 	} // End of reducer
 	
+	/**
+	 * Driver method
+	 * @param args args[0] current k value, args[1] last iteration value
+	 * @throws Throwable
+	 */
 	public static void main(String[] args) throws Throwable {
 		// Instantiating configuration class
 		Configuration config = HBaseConfiguration.create();
-						        
+		int jobNums = Integer.valueOf(args[2]);
 		if(KConfig.IS_AWS) {
 			//Required for AWS
 			config.addResource(new File(KConfig.HBASE_SITE).toURI().toURL());
 		}
 		HBaseAdmin.available(config);
-		int k = Integer.parseInt(args[0]);
+		int kValue = Integer.parseInt(args[0]);
 		int iteration = Integer.parseInt(args[1]);
-		config.set("kValue", ""+k);
+		config.set("kValue", ""+kValue);
 		config.set("iteration", ""+iteration);
 		Connection connection = ConnectionFactory.createConnection(config);
 		// Create new HBase table
 		createHTable(connection);
 		
 		Job job = Job.getInstance(config, JOB_NAME);
-		String outputFile = args[0];
 		job.setJarByClass(Silhouette.class);
 		job.setMapperClass(SilMapper.class);
 		job.setReducerClass(SilReducer.class);
 		job.setMapOutputKeyClass(DoubleWritable.class);
 		job.setMapOutputValueClass(IntWritable.class);
 		
-		//job.setOutputKeyClass(Text.class);
-		//job.setOutputValueClass(Text.class);
 		job.setNumReduceTasks(1);
-		TableMapReduceUtil.initTableMapperJob(setScan(), SilMapper.class, DoubleWritable.class, IntWritable.class, job);
+		TableMapReduceUtil.initTableMapperJob(setScan(jobNums), SilMapper.class, DoubleWritable.class, IntWritable.class, job);
 		TableMapReduceUtil.initTableReducerJob(KConfig.TABLE_SILSCORE, SilReducer.class, job);
-		//FileOutputFormat.setOutputPath(job, new Path(outputFile));
+
 		job.waitForCompletion(true);
 		System.out.println("Sil Score calculated");
 	}
 	
 	/**
-	 * Helper method to set the scan 
+	 * Helper method to set the scan for points
 	 * @return Scan setting
 	 */
-	public static List<Scan> setScan() {
+	public static List<Scan> setScan(int jobNums) {
 		List<Scan> scans = new ArrayList<Scan>();
-		for(int i = 0; i < 100; i++) {
+		for(int i = 0; i < jobNums; i++) {
 			Scan scan = new Scan();
 			scan.setCaching(500);
 			scan.setCacheBlocks(false);
-			scan.setAttribute(Scan.SCAN_ATTRIBUTES_TABLE_NAME, Bytes.toBytes(KConfig.HTABLE_NAME));
-			scan.setRowPrefixFilter(Bytes.toBytes(""+i));
+			scan.setAttribute(Scan.SCAN_ATTRIBUTES_TABLE_NAME, Bytes.toBytes(KConfig.TABLE_PT));
+			int prefix = i + 10;
+			scan.setRowPrefixFilter(Bytes.toBytes(""+prefix));
 			scans.add(scan);
 		}
+		
 		
 		//scan.addColumn(COLUMN_FAMILY,COLUMN_LATITUDE);
 		return scans;
@@ -246,51 +244,4 @@ public class Silhouette {
         }
 	} // end of createHTable() method
 	
-	public static List<Centroid> readCentroidsFromHBase(Connection connection, int iteration) throws IOException{
-		Table cTable = connection.getTable(TableName.valueOf(KConfig.TABLE_CENTROID));
-		List<Centroid> centers = new ArrayList<Centroid>();
-		Scan scan = setCentroidScan(iteration);
-		ResultScanner rs = cTable.getScanner(scan);
-		try {
-			for (Result r = rs.next(); r != null; r = rs.next()) {
-		    // process result...
-				int idx = Bytes.toInt(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_IDX));
-				double lat = Bytes.toDouble(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_LATITUDE));
-				double longi = Bytes.toDouble(r.getValue(KConfig.CF_CENTROID, KConfig.COLUMN_LONGITUDE));
-				Centroid newC = new Centroid(idx, lat, longi);
-				centers.add(newC);
-			}
-		} finally {
-			rs.close();  // always close the ResultScanner!
-		}
-		System.out.println("Iteration:"+iteration + " centers size:"+centers.size());
-		return centers;
-	}
-	
-	
-	/**
-	 * Helper method to set the scan 
-	 * @return Scan setting
-	 */
-	public static Scan setCentroidScan(int iteration) {
-		Scan scan = new Scan();
-		scan.setCaching(500);
-		scan.setCacheBlocks(false);
-		scan.setFilter(setFilter(iteration));
-		return scan;
-	}
-	
-	/**
-	 * Helper method to set the filter list
-	 * @return the FilterList setting
-	 */
-	public static FilterList setFilter(int iteration) {
-		FilterList filterList = new FilterList(FilterList.Operator.MUST_PASS_ALL);
-		byte[] targetItr = Bytes.toBytes(iteration);
-		SingleColumnValueFilter itrFilter = new SingleColumnValueFilter(
-				KConfig.CF_CENTROID, KConfig.COLUMN_ITERATION,
-				CompareOperator.EQUAL, targetItr );
-		filterList.addFilter(itrFilter);
-		return filterList;
-	}
 }

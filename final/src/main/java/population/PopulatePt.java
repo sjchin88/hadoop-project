@@ -2,6 +2,8 @@ package population;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -25,17 +27,13 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.Mapper.Context;
-import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
 
-import calc.Centroid;
 import calc.Coordinate;
 import program.KConfig;
 
@@ -65,8 +63,13 @@ public class PopulatePt {
 		public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
 			String line = value.toString();
 			String[] records = this.csvParser.parseLine(line);
-			double lat = Double.parseDouble(records[1]);
-			double longi = Double.parseDouble(records[2]);
+			//Round to 3 decimal places
+			BigDecimal bigLat = new BigDecimal(records[1]);
+			bigLat = bigLat.setScale(3, RoundingMode.HALF_UP);
+			double lat = bigLat.doubleValue();
+			BigDecimal bigLongi = new BigDecimal(records[2]);
+			bigLongi = bigLongi.setScale(3, RoundingMode.HALF_UP);
+			double longi = bigLongi.doubleValue();
 			pointKey.setLatitude(lat);
 			pointKey.setLongitude(longi);
 			context.write(pointKey,countValue);
@@ -82,13 +85,17 @@ public class PopulatePt {
 		private Connection connection;
 		private BufferedMutator mutator;
 		private int prefixItr = 0;
+		private int jobNums;
+		
 		/**
 		 * Set up method before each Reduce Task
 		 * Initialize the BufferedMutator connection
 		 */
 		protected void setup(Context context) throws IOException  {		
 			// Instantiating the connection to HBase table via BufferedMutator
-			Configuration config = HBaseConfiguration.create();
+			Configuration config = context.getConfiguration();
+			jobNums = Integer.valueOf(config.get("jobs number"));
+			//Configuration config = HBaseConfiguration.create();
 			BufferedMutator.ExceptionListener listener = new BufferedMutator.ExceptionListener() {
 				
 				public void onException(RetriesExhaustedWithDetailsException exception, BufferedMutator mutator)
@@ -98,7 +105,7 @@ public class PopulatePt {
 				    }					
 				}
 			};
-			BufferedMutatorParams params = new BufferedMutatorParams(TableName.valueOf(KConfig.HTABLE_NAME)).listener(listener);
+			BufferedMutatorParams params = new BufferedMutatorParams(TableName.valueOf(KConfig.TABLE_PT)).listener(listener);
 			//BufferSize in byte, default is 20
 			params.writeBufferSize( BUFFER_SIZEKB * 1024 );
 			this.connection = ConnectionFactory.createConnection(config);
@@ -113,7 +120,9 @@ public class PopulatePt {
 		    for (IntWritable val : values) {
 		        sum += val.get();
 		    }
-		    String prefix = ""+(prefixItr % 100);
+		    
+		    //
+		    String prefix = ""+(prefixItr % jobNums + 10);
 		    prefixItr++;
 		    String rowKey = prefix+key.getLatitude().toString()+ key.getLongitude().toString();
 	      
@@ -145,7 +154,7 @@ public class PopulatePt {
         Admin admin = connection.getAdmin();
 
         // Instantiating table descriptor class
-        TableName tName = TableName.valueOf(KConfig.HTABLE_NAME);
+        TableName tName = TableName.valueOf(KConfig.TABLE_PT);
         TableDescriptorBuilder tdb = TableDescriptorBuilder.newBuilder(tName);
         //tdb.setRegionSplitPolicyClassName("org.apache.hadoop.hbase.regionserver.ConstantSizeRegionSplitPolicy");
         //tdb.setRegionSplitPolicyClassName("org.apache.hadoop.hbase.regionserver.KeyPrefixRegionSplitPolicy");
@@ -182,7 +191,7 @@ public class PopulatePt {
         
 		// Parse program inputs
 		Path inputPath;
-		int bufferSize;
+		String mapperJobs;
 		try {
 			inputPath = new Path(args[0]);
 			if(KConfig.IS_AWS) { 
@@ -192,31 +201,26 @@ public class PopulatePt {
 			
 		} catch (Exception e) {
 			System.out.println("Error in parsing the program arguments");
-			System.out.println("Usage: <inputPath> <buffersize in mb (optional)>");
+			System.out.println("Usage: <inputPath> ");
 			throw e;
 		}
 		
-		try {
-			bufferSize = Integer.valueOf(args[1]);
-			BUFFER_SIZEKB = bufferSize;
-		} catch (Exception e) {
-			System.out.println("Error in parsing the buffer size, default will be used");
-			BUFFER_SIZEKB = 20;
-		}
+		mapperJobs = args[1];
+		config.set("jobs number", mapperJobs);
 		
 		Connection connection = ConnectionFactory.createConnection(config);
 		// Create new HBase table
 		createHTable(connection);
 				
 		// Configure the HPopulate job
-		Job job = Job.getInstance(config, "Populate HTable by Buffered v1");
+		Job job = Job.getInstance(config, "Populate points to table");
 		job.setJarByClass(PopulatePt.class);
 		job.setMapperClass(PopulateMapper.class);
 		job.setMapOutputKeyClass(Coordinate.class);
 		job.setMapOutputValueClass(IntWritable.class);		
 		job.setOutputFormatClass(TableOutputFormat.class);
 		TableMapReduceUtil.initTableReducerJob(
-				KConfig.HTABLE_NAME, 
+				KConfig.TABLE_PT, 
 				PopulateReducer.class,
 				job);
 		

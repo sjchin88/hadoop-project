@@ -1,0 +1,8 @@
+Max SilScore:0.8073582548220983 at kValue:10 at iteration:20
+Corresponding centroids
+0. Lat:40.6655 Longitude:-73.7986
+3. Lat:40.6696 Longitude:-74.406
+5. Lat:40.7367 Longitude:-73.987
+6. Lat:40.9236 Longitude:-73.6072
+7. Lat:40.7879 Longitude:-73.935
+9. Lat:40.7047 Longitude:-74.1786

@@ -1,0 +1,4 @@
+SilScore:1.0 at Kvalue:1 at iteration:2
+SilScore:0.9771483670851806 at Kvalue:2 at iteration:6
+SilScore:0.8753597812312208 at Kvalue:3 at iteration:3
+SilScore:0.808735913184791 at Kvalue:4 at iteration:7

@@ -73,7 +73,7 @@
                   <mainClass>program.KDriver</mainClass>
                 </transformer>
               </transformers>
-              <finalName>KMeanV3</finalName>
+              <finalName>KMeanV4</finalName>
             </configuration>
           </execution>
           

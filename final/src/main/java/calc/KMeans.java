@@ -28,7 +28,10 @@ import org.apache.hadoop.hbase.mapreduce.TableMapper;
 import org.apache.hadoop.hbase.mapreduce.TableReducer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.WritableComparable;
+import org.apache.hadoop.io.WritableComparator;
 import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Partitioner;
 
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
@@ -107,6 +110,45 @@ public class KMeans {
 			context.write(centerKey, pointValue);
 		}
 	} // End of Mapper class
+	
+	/**
+	 * Custom Partitioner class to partition based on the index only from the composite key
+	 * @author csj
+	 *
+	 */
+	public static class CentroidPartitioner extends Partitioner<Centroid, Coordinate>{
+		@Override
+		public int getPartition(Centroid key, Coordinate value, int numPartitions) {
+			// multiply by 127 to perform some mixing
+			return Math.abs(key.getIdx().get() * 127) % numPartitions;
+		}
+	}
+	
+	/**
+	 * Custom Key Comparator class to compare key based on idx
+	 * @author csj
+	 *
+	 */
+	public static class KeyComparator extends WritableComparator {
+		protected KeyComparator() {
+			super(Centroid.class, true);
+		}
+		
+		@Override
+		public int compare(WritableComparable w1, WritableComparable w2) {
+			Centroid a1 = (Centroid) w1;
+			Centroid a2 = (Centroid) w2;
+			int idx1 = a1.getIdx().get();
+			int idx2 = a2.getIdx().get();
+			if (idx1 == idx2) {
+				return 0;
+			} else if (idx1 < idx2) {
+				return -1;
+			} else {
+				return 1;
+			}
+		}
+	}
 	
 	public static class CenterReducer extends TableReducer<Centroid, Coordinate, ImmutableBytesWritable>{
 		private Centroid center = new Centroid();
@@ -197,6 +239,9 @@ public class KMeans {
 			
 			job.setJarByClass(KMeans.class);
 			job.setMapperClass(PointMapper.class);
+			job.setPartitionerClass(CentroidPartitioner.class);
+			job.setSortComparatorClass(KeyComparator.class);
+			job.setGroupingComparatorClass(KeyComparator.class);
 			job.setReducerClass(CenterReducer.class);
 			job.setMapOutputKeyClass(Centroid.class);
 			job.setMapOutputValueClass(Coordinate.class);

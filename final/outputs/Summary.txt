@@ -1,0 +1,3 @@
+Max SilScore:1.0 at kValue:1 at iteration:2
+Corresponding centroids
+0. Lat:40.742 Longitude:-73.976

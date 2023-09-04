@@ -69,7 +69,7 @@
 These are a collection of assignments and projects completed using the Hadoop MapReduce framework. 
 Additional tools utilized include Apache Pig (Pig Latin) and HBase. 
 The final project is to compute the optimal waiting locations for Uber Drivers in NYC using K-means Clustering Algorithm. 
-You can check out the final presentation [here](Final-Project-Presentation.pdf)
+You can check out the final presentation [here](Final Project Presentation.pdf)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

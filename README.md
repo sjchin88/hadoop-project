@@ -156,7 +156,6 @@ Distributed under the MIT License. See `LICENSE.txt` for more information.
 
 My linkedin - [https://www.linkedin.com/in/shiang-jin-chin-b1575944/](https://www.linkedin.com/in/shiang-jin-chin-b1575944/)
 
-Project Link: [https://github.com/sjchin88/SociusApp-backend](https://github.com/sjchin88/SociusApp-backend)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -166,7 +165,6 @@ Project Link: [https://github.com/sjchin88/SociusApp-backend](https://github.com
 ## Acknowledgments
 
 * [An awesome README template](https://github.com/othneildrew/Best-README-Template)
-* [Udemy: Node with React: Build & Deploy a Fullstack Web Application](https://www.udemy.com/course/node-with-react-build-deploy-a-fullstack-web-application/)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
